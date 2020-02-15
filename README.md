@@ -8,9 +8,11 @@ Install the package via composer.
 
 Run the composer command: ```composer require afragen/wp-dependency-installer```
 
+To update, run the command ```composer update```
+
 Then create a new `wp-dependencies.json` file.
 
-```cp ./vendor/afragen/wp-dependency-installer/wp-dependencies-example.json wp-dependencies.json```
+```cp ./wp-dependencies-example.json ./example-plugin/wp-dependencies.json```
 
 You will then need to update `wp-dependencies.json` to suit your requirements.
 
