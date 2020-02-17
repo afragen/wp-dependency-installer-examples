@@ -44,7 +44,7 @@ You may use `required` or `optional` as interchangable opposites. If a plugin is
     "slug": "github-updater/github-updater.php",
     "uri": "afragen/github-updater",
     "branch": "master",
-    "optional": false,
+    "required": true,
     "token": null
   },
   {
@@ -79,7 +79,8 @@ An example file is included, `wp-dependencies-example.json`. You may use a short
 If you want to programmatically add dependencies you can send an associative array directly to
 
 ```php
-WP_Dependency_Installer::instance()->register( $config )
+WP_Dependency_Installer::instance()->register( $config, __DIR__ );
+WP_Dependency_Installer::instance()->run( __DIR__ );
 ```
 
 where `$config` is an associative array as in identical format as `json_decode( wp-dependencies.json content )`

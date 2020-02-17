@@ -12,7 +12,7 @@
     "slug": "github-updater/github-updater.php",
     "uri": "afragen/github-updater",
     "branch": "master",
-    "optional": false,
+    "required": true,
     "token": null
   },
   {
