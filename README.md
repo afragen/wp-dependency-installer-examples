@@ -20,7 +20,7 @@ Add the following lines to your plugin or to your theme's `functions.php` file.
 
 ```php
 include_once( __DIR__ . '/vendor/autoload.php' );
-WP_Dependency_Installer::instance()->run( __DIR__ );
+WP_Dependency_Installer::instance( __DIR__ )->run();
 ```
 
 ## JSON config file format
@@ -79,8 +79,8 @@ An example file is included, `wp-dependencies-example.json`. You may use a short
 If you want to programmatically add dependencies you can send an associative array directly to
 
 ```php
-WP_Dependency_Installer::instance()->register( $config, __DIR__ );
-WP_Dependency_Installer::instance()->run( __DIR__ );
+WP_Dependency_Installer::instance( __DIR__ )->register( $config );
+WP_Dependency_Installer::instance( __DIR__ )->run();
 ```
 
 where `$config` is an associative array as in identical format as `json_decode( wp-dependencies.json content )`
