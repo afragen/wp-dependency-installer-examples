@@ -21,6 +21,9 @@ Add the following lines to your plugin or to your theme's `functions.php` file.
 ```php
 include_once( __DIR__ . '/vendor/autoload.php' );
 WP_Dependency_Installer::instance( __DIR__ )->run();
+
+// Needed in theme's functions.php file.
+add_filter( 'pand_theme_loader', '__return_true' );
 ```
 
 ## JSON config file format
