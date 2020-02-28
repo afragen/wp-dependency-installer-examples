@@ -67,7 +67,7 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 		public static function instance( $caller = false ) {
 			static $instance = null;
 			if ( null === $instance ) {
-				$instance = new self( $caller );
+				$instance = new self();
 			}
 			self::$caller = $caller;
 			self::$source = ! $caller ? false : basename( $caller );
@@ -106,6 +106,8 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 		 * Then load hooks needed to run.
 		 *
 		 * @param string $caller Path to plugin or theme calling the framework.
+		 *
+		 * @return self
 		 */
 		public function run( $caller = false ) {
 			$caller = ! $caller ? self::$caller : $caller;
@@ -116,6 +118,8 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 			if ( ! empty( $this->config ) ) {
 				$this->load_hooks();
 			}
+
+			return $this;
 		}
 
 		/**
@@ -125,7 +129,7 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 		 *
 		 * @return bool|array $config
 		 */
-		private function json_file_decode( $json_path ) {
+		public function json_file_decode( $json_path ) {
 			$config = [];
 			if ( file_exists( $json_path ) ) {
 				$config = file_get_contents( $json_path );
@@ -140,26 +144,33 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 		 *
 		 * @param array  $config JSON config as array.
 		 * @param string $caller Path to plugin or theme calling the framework.
+		 *
+		 * @return self
 		 */
 		public function register( $config, $caller = false ) {
 			$source = ! self::$source ? basename( $caller ) : self::$source;
 			foreach ( $config as $dependency ) {
+				// Save a reference of current dependent plugin.
 				$dependency['source']    = $source;
 				$dependency['sources'][] = $source;
 				$slug                    = $dependency['slug'];
+				// Keep a reference of all dependent plugins.
 				if ( isset( $this->config[ $slug ] ) ) {
 					$dependency['sources'] = array_merge( $this->config[ $slug ]['sources'], $dependency['sources'] );
 				}
+				// Update config.
 				if ( ! isset( $this->config[ $slug ] ) || $this->is_required( $dependency ) ) {
 					$this->config[ $slug ] = $dependency;
 				}
 			}
+
+			return $this;
 		}
 
 		/**
 		 * Process the registered dependencies.
 		 */
-		public function apply_config() {
+		private function apply_config() {
 			foreach ( $this->config as $dependency ) {
 				$download_link = null;
 				$base          = null;
@@ -208,9 +219,16 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 				 * @param string $download_link Download link.
 				 * @param array  $dependency    Dependency configuration.
 				 */
-				$download_link = apply_filters( 'wp_dependency_download_link', $download_link, $dependency );
+				$dependency['download_link'] = apply_filters( 'wp_dependency_download_link', $download_link, $dependency );
 
-				$this->config[ $slug ]['download_link'] = $download_link;
+				/**
+				 * Allow filtering of individual dependency config.
+				 *
+				 * @since 3.0.0
+				 *
+				 * @param array  $dependency    Dependency configuration.
+				 */
+				$this->config[ $slug ] = apply_filters( 'wp_dependency_config', $dependency );
 			}
 		}
 
@@ -220,7 +238,7 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 		 * @param  string $slug Plugin slug.
 		 * @return string $download_link
 		 */
-		public function get_dot_org_latest_download( $slug ) {
+		private function get_dot_org_latest_download( $slug ) {
 			$download_link = get_site_transient( 'wpdi-' . md5( $slug ) );
 
 			if ( ! $download_link ) {
@@ -425,7 +443,7 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 			}
 
 			wp_cache_flush();
-			if ( $this->is_required( $this->config[ $slug ] ) ) {
+			if ( $this->is_required( $slug ) ) {
 				$this->activate( $slug );
 
 				return [
@@ -463,7 +481,7 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 				'action'  => 'install',
 				'slug'    => $slug,
 				/* translators: %s: Plugin name */
-				'message' => sprintf( esc_html__( 'The %s plugin is required.' ), $dependency['name'] ),
+				'message' => sprintf( esc_html__( 'The %s plugin is recommended.' ), $dependency['name'] ),
 				'source'  => $dependency['source'],
 			];
 		}
@@ -585,37 +603,43 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 				return false;
 			}
 			foreach ( $this->notices as $notice ) {
-				$status  = empty( $notice['status'] ) ? 'updated' : $notice['status'];
-				$message = empty( $notice['message'] ) ? '' : esc_html( $notice['message'] );
+				$status      = isset( $notice['status'] ) ? $notice['status'] : 'updated';
+				$source      = isset( $notice['source'] ) ? $notice['source'] : __( 'Dependency' );
+				$class       = esc_attr( $status ) . ' notice is-dismissible dependency-installer';
+				$label       = esc_html( $this->get_dismiss_label( $source ) );
+				$message     = '';
+				$action      = '';
+				$dismissible = '';
 
-				if ( ! empty( $notice['action'] ) ) {
-					$action   = esc_attr( $notice['action'] );
-					$message .= ' <a href="javascript:;" class="wpdi-button" data-action="' . $action . '" data-slug="' . $notice['slug'] . '">' . ucfirst( $action ) . ' Now &raquo;</a>';
+				if ( isset( $notice['message'] ) ) {
+					$message = esc_html( $notice['message'] );
 				}
 
-				/**
-				 * Filters the dismissal timeout.
-				 *
-				 * @since 1.4.1
-				 *
-				 * @param string|int '7'           Default dismissal in days.
-				 * @param  string     $notice['source'] Plugin slug of calling plugin.
-				 * @return string|int Dismissal timeout in days.
-				 */
-				$timeout     = '-' . apply_filters( 'wp_dependency_timeout', '7', $notice['source'] );
-				$dismissible = isset( $notice['slug'] )
-				? 'dependency-installer-' . dirname( $notice['slug'] ) . $timeout
-				: null;
-				if ( class_exists( '\PAnd' ) && ! \PAnD::is_admin_notice_active( $dismissible ) ) {
-					continue;
+				if ( isset( $notice['action'] ) ) {
+					$action = sprintf(
+						' <a href="javascript:;" class="wpdi-button" data-action="%1$s" data-slug="%2$s">%3$s Now &raquo;</a> ',
+						esc_attr( $notice['action'] ),
+						esc_attr( $notice['slug'] ),
+						esc_html( ucfirst( $notice['action'] ) )
+					);
 				}
-
-				$label = $this->get_dismiss_label( $notice['source'] );
-				?>
-				<div data-dismissible="<?php echo $dismissible; ?>" class="<?php echo $status; ?> notice is-dismissible dependency-installer">
-					<p><?php echo '<strong>[' . esc_html( $label ) . ']</strong> ' . $message; ?></p>
-				</div>
-				<?php
+				if ( isset( $notice['slug'] ) ) {
+					/**
+					 * Filters the dismissal timeout.
+					 *
+					 * @since 1.4.1
+					 *
+					 * @param string|int '7'           Default dismissal in days.
+					 * @param  string     $notice['source'] Plugin slug of calling plugin.
+					 * @return string|int Dismissal timeout in days.
+					 */
+					$timeout     = apply_filters( 'wp_dependency_timeout', '7', $source );
+					$dependency  = dirname( $notice['slug'] );
+					$dismissible = empty( $timeout ) ? '' : sprintf( 'dependency-installer-%1$s-%2$s', esc_attr( $dependency ), esc_attr( $timeout ) );
+				}
+				if ( class_exists( '\PAnD' ) && \PAnD::is_admin_notice_active( $dismissible ) ) {
+					printf( '<div class="%1$s" data-dismissible="%2$s"><p><strong>[%3$s]</strong> %4$s%5$s</p></div>', $class, $dismissible, $label, $message, $action );
+				}
 			}
 		}
 
@@ -624,7 +648,7 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 		 *
 		 * @param string $plugin_file Plugin file.
 		 */
-		public function modify_plugin_row( $plugin_file ) {
+		private function modify_plugin_row( $plugin_file ) {
 			add_filter( 'network_admin_plugin_action_links_' . $plugin_file, [ $this, 'unset_action_links' ], 10, 2 );
 			add_filter( 'plugin_action_links_' . $plugin_file, [ $this, 'unset_action_links' ], 10, 2 );
 			add_action( 'after_plugin_row_' . $plugin_file, [ $this, 'modify_plugin_row_elements' ] );
@@ -722,7 +746,6 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 			$label = str_replace( '-', ' ', $source );
 			$label = ucwords( $label );
 			$label = str_ireplace( 'wp ', 'WP ', $label );
-			$label = empty( $label ) ? __( 'Dependency' ) : $label;
 
 			/**
 			 * Filters the dismissal notice label
@@ -742,11 +765,18 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 		 * @since 1.4.11
 		 *
 		 * @param string $slug Plugin slug.
+		 * @param string $key Dependency key.
 		 *
-		 * @return array The configuration.
+		 * @return mixed|array The configuration.
 		 */
-		public function get_config( $slug = '' ) {
-			return isset( $this->config[ $slug ] ) ? $this->config[ $slug ] : $this->config;
+		public function get_config( $slug = '', $key = '' ) {
+			if ( empty( $slug ) && empty( $key ) ) {
+				return $this->config;
+			} elseif ( empty( $key ) ) {
+				return isset( $this->config[ $slug ] ) ? $this->config[ $slug ] : null;
+			} else {
+				return isset( $this->config[ $slug ][ $key ] ) ? $this->config[ $slug ][ $key ] : null;
+			}
 		}
 
 		/**

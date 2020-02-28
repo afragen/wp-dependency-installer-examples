@@ -60,6 +60,9 @@ You will then need to update `wp-dependencies.json` to suit your requirements.
 ```php
 require_once __DIR__ . '/vendor/autoload.php';
 WP_Dependency_Installer::instance( __DIR__ )->run();
+
+// Needed in theme's functions.php file.
+add_filter( 'pand_theme_loader', '__return_true' );
 ```
 
 4. (optional) Take a look at some of built in [Hooks](https://github.com/afragen/wp-dependency-installer/wiki/Actions-and-Hooks) and [Functions](https://github.com/afragen/wp-dependency-installer/wiki/Helper-Functions) to further customize your plugin look and behaviour:
@@ -75,6 +78,26 @@ add_filter(
     return $label;
   }, 10, 2
 );
+```
+
+5. Sanity Check
+
+```php
+// Sanity check for WPDI v3.0.0.
+if ( ! method_exists( 'WP_Dependency_Installer', 'json_file_decode' ) ) {
+ add_action(
+   'admin_notices',
+   function() {
+     $class   = 'notice notice-error is-dismissible';
+     $label   = __( 'Your Plugin Name', 'your-plugin' );
+     $file    = ( new ReflectionClass( 'WP_Dependency_Installer' ) )->getFilename();
+     $message = __( 'Another theme or plugin is using a previous version of the WP Dependency Installer library, please update this file and try again:', 'group-plugin-installer' );
+     printf( '<div class="%1$s"><p><strong>[%2$s]</strong> %3$s</p><pre>%4$s</pre></div>', esc_attr( $class ), esc_html( $label ), esc_html( $message ), esc_html( $file ) );
+   },
+   1
+ );
+ return false; // Exit early.
+}
 ```
 
 That's it, happy blogging!
