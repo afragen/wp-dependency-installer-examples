@@ -60,6 +60,13 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 		private $notices;
 
 		/**
+		 * Holds nonce.
+		 *
+		 * @var $nonce
+		 */
+		protected static $nonce;
+
+		/**
 		 * Factory.
 		 *
 		 * @param string $caller File path to calling plugin/theme.
@@ -81,6 +88,12 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 		private function __construct() {
 			$this->config  = [];
 			$this->notices = [];
+			add_action(
+				'plugins_loaded',
+				function() {
+					static::$nonce = wp_create_nonce( 'wp-dependency-installer' );
+				}
+			);
 		}
 
 		/**
@@ -96,8 +109,7 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 			add_action( 'wp_ajax_dependency_installer', [ $this, 'ajax_router' ] );
 			add_filter( 'http_request_args', [ $this, 'add_basic_auth_headers' ], 15, 2 );
 
-			// Initialize Persist admin Notices Dismissal dependency.
-			add_action( 'admin_init', [ 'PAnD', 'init' ] );
+			new \WP_Dismiss_Notice();
 		}
 
 		/**
@@ -179,7 +191,7 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 				$uri_args      = parse_url( $uri ); // phpcs:ignore WordPress.WP.AlternativeFunctions.parse_url_parse_url
 				$port          = isset( $uri_args['port'] ) ? $uri_args['port'] : null;
 				$api           = isset( $uri_args['host'] ) ? $uri_args['host'] : null;
-				$api           = ! $port ? $api : "$api:$port";
+				$api           = ! $port ? $api : "{$api}:{$port}";
 				$scheme        = isset( $uri_args['scheme'] ) ? $uri_args['scheme'] : null;
 				$scheme        = null !== $scheme ? $scheme . '://' : 'https://';
 				$path          = isset( $uri_args['path'] ) ? $uri_args['path'] : null;
@@ -277,6 +289,7 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 					$this->modify_plugin_row( $slug );
 				}
 
+				// phpcs:ignore Generic.CodeAnalysis.EmptyStatement.DetectedIf
 				if ( $this->is_active( $slug ) ) {
 					// Do nothing.
 				} elseif ( $this->is_installed( $slug ) ) {
@@ -343,13 +356,17 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 		 * AJAX router.
 		 */
 		public function ajax_router() {
-			$method    = isset( $_POST['method'] ) ? $_POST['method'] : '';
-			$slug      = isset( $_POST['slug'] ) ? $_POST['slug'] : '';
+			if ( ! wp_verify_nonce( static::$nonce, 'wp-dependency-installer' ) ) {
+				return;
+			}
+
+			$method    = isset( $_POST['method'] ) ? sanitize_text_field( wp_unslash( $_POST['method'] ) ) : '';
+			$slug      = isset( $_POST['slug'] ) ? sanitize_text_field( wp_unslash( $_POST['slug'] ) ) : '';
 			$whitelist = [ 'install', 'activate', 'dismiss' ];
 
 			if ( in_array( $method, $whitelist, true ) ) {
 				$response = $this->$method( $slug );
-				echo $response['message'];
+				esc_html_e( $response['message'] );
 			}
 			wp_die();
 		}
@@ -419,7 +436,7 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 			$this->current_slug = $slug;
 			add_filter( 'upgrader_source_selection', [ $this, 'upgrader_source_selection' ], 10, 2 );
 
-			$skin     = new WPDI_Plugin_Installer_Skin(
+			$skin     = new WP_Dependency_Installer_Skin(
 				[
 					'type'  => 'plugin',
 					'nonce' => wp_nonce_url( $this->config[ $slug ]['download_link'] ),
@@ -572,25 +589,58 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 		 * @return bool|void
 		 */
 		private function move( $source, $destination ) {
-			if ( @rename( $source, $destination ) ) {
+			if ( $this->filesystem_move( $source, $destination ) ) {
 				return true;
 			}
-			$dir = opendir( $source );
-			mkdir( $destination );
-			$source = untrailingslashit( $source );
-			// phpcs:ignore WordPress.CodeAnalysis.AssignmentInCondition.FoundInWhileCondition
-			while ( false !== ( $file = readdir( $dir ) ) ) {
-				if ( ( '.' !== $file ) && ( '..' !== $file ) && "$source/$file" !== $destination ) {
-					if ( is_dir( "$source/$file" ) ) {
-						$this->move( "$source/$file", "$destination/$file" );
-					} else {
-						copy( "$source/$file", "$destination/$file" );
-						unlink( "$source/$file" );
+			if ( is_dir( $destination ) && rename( $source, $destination ) ) {
+				return true;
+			}
+			// phpcs:ignore WordPress.CodeAnalysis.AssignmentInCondition.Found, Squiz.PHP.DisallowMultipleAssignments.FoundInControlStructure
+			if ( $dir = opendir( $source ) ) {
+				if ( ! file_exists( $destination ) ) {
+					mkdir( $destination );
+				}
+				$source = untrailingslashit( $source );
+				// phpcs:ignore WordPress.CodeAnalysis.AssignmentInCondition.FoundInWhileCondition
+				while ( false !== ( $file = readdir( $dir ) ) ) {
+					if ( ( '.' !== $file ) && ( '..' !== $file ) && "{$source}/{$file}" !== $destination ) {
+						if ( is_dir( "{$source}/{$file}" ) ) {
+							$this->move( "{$source}/{$file}", "{$destination}/{$file}" );
+						} else {
+							copy( "{$source}/{$file}", "{$destination}/{$file}" );
+							unlink( "{$source}/{$file}" );
+						}
 					}
 				}
+				$iterator = new \FilesystemIterator( $source );
+				if ( ! $iterator->valid() ) { // True if directory is empty.
+					rmdir( $source );
+				}
+				closedir( $dir );
+
+				return true;
 			}
-			@rmdir( $source );
-			closedir( $dir );
+
+			return false;
+		}
+
+		/**
+		 * Non-direct filesystem move.
+		 *
+		 * @uses $wp_filesystem->move() when FS_METHOD is not 'direct'
+		 *
+		 * @param string $source      File path of source.
+		 * @param string $destination File path of destination.
+		 *
+		 * @return bool|void True on success, false on failure.
+		 */
+		public function filesystem_move( $source, $destination ) {
+			global $wp_filesystem;
+			if ( 'direct' !== $wp_filesystem->method ) {
+				return $wp_filesystem->move( $source, $destination );
+			}
+
+			return false;
 		}
 
 		/**
@@ -637,8 +687,17 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 					$dependency  = dirname( $notice['slug'] );
 					$dismissible = empty( $timeout ) ? '' : sprintf( 'dependency-installer-%1$s-%2$s', esc_attr( $dependency ), esc_attr( $timeout ) );
 				}
-				if ( class_exists( '\PAnD' ) && \PAnD::is_admin_notice_active( $dismissible ) ) {
-					printf( '<div class="%1$s" data-dismissible="%2$s"><p><strong>[%3$s]</strong> %4$s%5$s</p></div>', $class, $dismissible, $label, $message, $action );
+				if ( \WP_Dismiss_Notice::is_admin_notice_active( $dismissible ) ) {
+					printf(
+						'<div class="%1$s" data-dismissible="%2$s"><p><strong>[%3$s]</strong> %4$s%5$s</p></div>',
+						esc_attr( $class ),
+						esc_attr( $dismissible ),
+						esc_html( $label ),
+						esc_html( $message ),
+						// $action is escaped above.
+						// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+						$action
+					);
 				}
 			}
 		}
@@ -712,10 +771,10 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 			 * @param bool $display show plugin row meta.
 			 */
 			if ( apply_filters( 'wp_dependency_required_row_meta', true ) ) {
-				print 'jQuery("tr[data-plugin=\'' . $plugin_file . '\'] .plugin-version-author-uri").append("<br><br><strong>' . esc_html__( 'Required by:' ) . '</strong> ' . $this->get_dependency_sources( $plugin_file ) . '");';
+				print 'jQuery("tr[data-plugin=\'' . esc_attr( $plugin_file ) . '\'] .plugin-version-author-uri").append("<br><br><strong>' . esc_html__( 'Required by:' ) . '</strong> ' . esc_html( $this->get_dependency_sources( $plugin_file ) ) . '");';
 			}
-			print 'jQuery(".inactive[data-plugin=\'' . $plugin_file . '\']").attr("class", "active");';
-			print 'jQuery(".active[data-plugin=\'' . $plugin_file . '\'] .check-column input").remove();';
+			print 'jQuery(".inactive[data-plugin=\'' . esc_attr( $plugin_file ) . '\']").attr("class", "active");';
+			print 'jQuery(".active[data-plugin=\'' . esc_attr( $plugin_file ) . '\'] .check-column input").remove();';
 			print '</script>';
 		}
 
@@ -817,25 +876,6 @@ if ( ! class_exists( 'WP_Dependency_Installer' ) ) {
 			remove_filter( 'http_request_args', [ $this, 'add_basic_auth_headers' ] );
 
 			return $args;
-		}
-	}
-
-	require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
-
-	/**
-	 * Class WPDI_Plugin_Installer_Skin
-	 */
-	class WPDI_Plugin_Installer_Skin extends Plugin_Installer_Skin {
-		public function header() {
-		}
-
-		public function footer() {
-		}
-
-		public function error( $errors ) {
-		}
-
-		public function feedback( $string, ...$args ) {
 		}
 	}
 }
