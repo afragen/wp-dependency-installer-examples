@@ -39,10 +39,10 @@ You may use `required` or `optional` as interchangable opposites. If a plugin is
     "required": true
   },
   {
-    "name": "GitHub Updater",
+    "name": "Git Updater",
     "host": "github",
-    "slug": "github-updater/github-updater.php",
-    "uri": "afragen/github-updater",
+    "slug": "git-updater/git-updater.php",
+    "uri": "afragen/git-updater",
     "branch": "master",
     "required": true,
     "token": null
