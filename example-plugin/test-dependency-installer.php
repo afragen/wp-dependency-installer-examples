@@ -14,7 +14,12 @@
 
 require_once __DIR__ . '/vendor/autoload.php';
 
-WP_Dependency_Installer::instance( __DIR__ )->run();
+add_action(
+	'plugins_loaded',
+	function() {
+		WP_Dependency_Installer::instance( __DIR__ )->run();
+	}
+);
 
 /**
  * Increase dismissable timeout from 7 to 14 days.
